@@ -45,10 +45,10 @@ exports.signupValidator = [
     .notEmpty()
     .withMessage('passwordConfirm is required field'),
 
-  check('phone')
-    .optional()
-    .isMobilePhone('ar-EG')
-    .withMessage('accept only egypt phone numbers'),
+  check('phone'),
+    // .optional()
+    // .isMobilePhone('ar-EG')
+    // .withMessage('accept only egypt phone numbers'),
 
   validatorMiddleware,
 ];

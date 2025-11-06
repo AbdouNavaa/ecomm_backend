@@ -22,6 +22,13 @@ const productSchema = new mongoose.Schema(
     quantity: {
       type: Number,
       required: [true, "Product quantity is required"],
+      min: [0, "Product quantity cannot be negative"],
+      validate: {
+        validator: function(value) {
+          return value >= 0;
+        },
+        message: "Product quantity must be 0 or positive"
+      }
     },
     sold: {
       type: Number,

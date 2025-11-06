@@ -8,6 +8,11 @@ const {
   applyCouponToCart,
 } = require('../controllers/cartService');
 
+const {
+  addToCartValidator,
+  updateCartItemValidator,
+} = require('../utils/validators/cartValidator');
+
 const authController = require('../controllers/authController');
 
 const router = express.Router();
@@ -18,10 +23,12 @@ router.route('/applyCoupon').put(applyCouponToCart);
 
 router
   .route('/')
-  .post(addProductToCart)
+  .post(addToCartValidator, addProductToCart)
   .get(getLoggedUserCart)
   .delete(clearLoggedUserCart);
 
-router.route('/:itemId').put(updateCartProductCount).delete(removeCartProduct);
+router.route('/:itemId')
+  .put(updateCartItemValidator, updateCartProductCount)
+  .delete(removeCartProduct);
 
 module.exports = router;

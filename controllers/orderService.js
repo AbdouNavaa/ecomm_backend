@@ -7,6 +7,7 @@ const User = require('../models/userModel');
 const Product = require('../models/productModel');
 const Cart = require('../models/cartModel');
 const Order = require('../models/orderModel');
+const sendEmail = require('../utils/sendEmail'); // Production email service
 
 // @desc    Create new order
 // @route   POST /api/orders/cartId
@@ -20,15 +21,35 @@ exports.createCashOrder = asyncHandler(async (req, res, next) => {
   // 1) Get logged user cart
   const cart = await Cart.findById(req.params.cartId);
   if (!cart) {
-    return next(
-      new ApiError(`There is no cart for this user :${req.user._id}`, 404)
-    );
+    return res.status(404).json({
+      status: 'error',
+      message: `There is no cart for this user :${req.user._id}`
+    });
   }
 
   // 2) Check if there is coupon apply
   const cartPrice = cart.totalAfterDiscount
     ? cart.totalAfterDiscount
     : cart.totalCartPrice;
+
+  // 2.5) Check product availability before creating order
+  for (const item of cart.products) {
+    const product = await Product.findById(item.product);
+    if (!product) {
+      return res.status(404).json({
+        status: 'error',
+        message: `Product ${item.product} not found`
+      });
+    }
+    if (product.quantity < item.count) {
+      return res.status(400).json({
+        product: product,
+        count: item.count,
+        status: 'error',
+        message: `Insufficient stock for ${product.title}. Available: ${product.quantity}, Requested: ${item.count}`
+      });
+    }
+  }
 
   // 3) Create order with default cash option
   const order = await Order.create({
@@ -39,19 +60,56 @@ exports.createCashOrder = asyncHandler(async (req, res, next) => {
   });
 
   // 4) After creating order decrement product quantity, increment sold
-  // Performs multiple write operations with controls for order of execution.
+  // Use safer approach to prevent negative stocks
   if (order) {
-    const bulkOption = cart.products.map((item) => ({
-      updateOne: {
-        filter: { _id: item.product },
-        update: { $inc: { quantity: -item.count, sold: +item.count } },
-      },
-    }));
-
-    await Product.bulkWrite(bulkOption, {});
+    for (const item of cart.products) {
+      const product = await Product.findById(item.product);
+      if (product) {
+        const newQuantity = Math.max(0, product.quantity - item.count);
+        const newSold = product.sold + item.count;
+        
+        await Product.findByIdAndUpdate(item.product, {
+          quantity: newQuantity,
+          sold: newSold
+        });
+        
+        // Log if stock becomes 0
+        if (newQuantity === 0) {
+          console.log(`⚠️  Product "${product.title}" is now out of stock`);
+        }
+      }
+    }
 
     // 5) Clear cart
     await Cart.findByIdAndDelete(req.params.cartId);
+    // 6) Send order details to admin email so owner can contact customer
+    try {
+      // build products detail lines
+      const productIds = order.cartItems.map((it) => it.product);
+      const products = await Product.find({ _id: { $in: productIds } });
+      const productsMap = {};
+      products.forEach((p) => {
+        productsMap[p._id] = p;
+      });
+
+      let itemsText = '';
+      order.cartItems.forEach((it) => {
+        const prod = productsMap[it.product] || {};
+        const title = prod.title || String(it.product);
+        itemsText += `- ${title} | qty: ${it.count} | price: ${it.price}\n`;
+      });
+
+      const adminMessage =
+        `New order received\nOrder id: ${order.id || order._id}\nCustomer: ${req.user.name} <${req.user.email}>\nPhone: ${req.user.phone || 'N/A'}\nShipping: ${JSON.stringify(order.shippingAddress)}\nTotal: ${order.totalOrderPrice}\nPayment: ${order.paymentMethodType || 'cash'}\nItems:\n${itemsText}`;
+
+      await sendEmail({
+        email: 'babana9977@gmail.com',
+        subject: `New order #${order.id || order._id}`,
+        message: adminMessage,
+      });
+    } catch (err) {
+      console.error('Failed to send admin order email:', err);
+    }
   }
 
   res.status(201).json({ status: 'success', data: order });
@@ -79,9 +137,10 @@ exports.updateOrderToPaid = asyncHandler(async (req, res, next) => {
   const order = await Order.findById(req.params.id);
 
   if (!order) {
-    return next(
-      new ApiError(`There is no order for this id: ${req.params.id}`, 404)
-    );
+    return res.status(404).json({
+      status: 'error',
+      message: `There is no order for this id: ${req.params.id}`
+    });
   }
 
   order.isPaid = true;
@@ -101,12 +160,16 @@ exports.updateOrderToDelivered = asyncHandler(async (req, res, next) => {
   const order = await Order.findById(req.params.id);
 
   if (!order) {
-    return next(
-      new ApiError(`There is no order for this id: ${req.params.id}`, 404)
-    );
+    return res.status(404).json({
+      status: 'error',
+      message: `There is no order for this id: ${req.params.id}`
+    });
   }
 
   order.isDelivered = true;
+  // order.id++;
+  console.log(order.id);
+  
   order.deliveredAt = Date.now();
 
   const updatedOrder = await order.save();
@@ -120,9 +183,10 @@ exports.checkoutSession = asyncHandler(async (req, res, next) => {
   // 1) Get the currently cart
   const cart = await Cart.findById(req.params.cartId);
   if (!cart) {
-    return next(
-      new ApiError(`There is no cart for this user :${req.user._id}`, 404)
-    );
+    return res.status(404).json({
+      status: 'error',
+      message: `There is no cart for this user :${req.user._id}`
+    });
   }
 
   // 2) Get cart price, Check if there is coupon apply
@@ -181,19 +245,55 @@ const createOrderCheckout = async (session) => {
   });
 
   // 4) After creating order decrement product quantity, increment sold
-  // Performs multiple write operations with controls for order of execution.
+  // Use safer approach to prevent negative stocks
   if (order) {
-    const bulkOption = cart.products.map((item) => ({
-      updateOne: {
-        filter: { _id: item.product },
-        update: { $inc: { quantity: -item.count, sold: +item.count } },
-      },
-    }));
-
-    await Product.bulkWrite(bulkOption, {});
+    for (const item of cart.products) {
+      const product = await Product.findById(item.product);
+      if (product) {
+        const newQuantity = Math.max(0, product.quantity - item.count);
+        const newSold = product.sold + item.count;
+        
+        await Product.findByIdAndUpdate(item.product, {
+          quantity: newQuantity,
+          sold: newSold
+        });
+        
+                // Log if stock becomes 0
+        if (newQuantity === 0) {
+          console.log(`⚠️  Product "${product.title}" is now out of stock`);
+        }
+      }
+    }
 
     // 5) Clear cart
     await Cart.findByIdAndDelete(cart._id);
+    // 6) Send order details to admin email so owner can contact customer (Stripe)
+    try {
+      const productIds = order.cartItems.map((it) => it.product);
+      const products = await Product.find({ _id: { $in: productIds } });
+      const productsMap = {};
+      products.forEach((p) => {
+        productsMap[p._id] = p;
+      });
+
+      let itemsText = '';
+      order.cartItems.forEach((it) => {
+        const prod = productsMap[it.product] || {};
+        const title = prod.title || String(it.product);
+        itemsText += `- ${title} | qty: ${it.count} | price: ${it.price}\n`;
+      });
+
+      const adminMessage =
+        `New order received\nOrder id: ${order.id || order._id}\nCustomer: ${user.name} <${user.email}>\nPhone: ${user.phone || 'N/A'}\nShipping: ${JSON.stringify(order.shippingAddress)}\nTotal: ${order.totalOrderPrice}\nPayment: ${order.paymentMethodType || 'card'}\nItems:\n${itemsText}`;
+
+      await sendEmail({
+        email: 'babana9977@gmail.com',
+        subject: `New order #${order.id || order._id}`,
+        message: adminMessage,
+      });
+    } catch (err) {
+      console.error('Failed to send admin order email (stripe):', err);
+    }
   }
 };
 

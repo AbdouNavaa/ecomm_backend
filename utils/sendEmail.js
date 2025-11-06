@@ -32,8 +32,14 @@ const sendEmail = async (options) => {
   // 3) Actually send the email
   try {
     await transporter.sendMail(mailOptions);
+    console.log(`Email sent successfully to ${options.email}`);
   } catch (error) {
     console.error('Error sending email:', error);
+    console.error('Email config check:');
+    console.error('- EMAIL_USERNAME:', process.env.EMAIL_USERNAME);
+    console.error('- EMAIL_PASSWORD:', process.env.EMAIL_PASSWORD ? '[SET]' : '[NOT SET]');
+    console.error('- EMAIL_HOST:', process.env.EMAIL_HOST);
+    console.error('- EMAIL_PORT:', process.env.EMAIL_PORT);
     throw new ApiError('There was an error sending the email. Try again later!', 500);
   }
   

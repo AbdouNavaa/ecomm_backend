@@ -154,7 +154,7 @@ exports.forgotPassword = asyncHandler(async (req, res, next) => {
   user.passwordResetExpires = Date.now() + 10 * 60 * 1000;
   // because user maybe send new code after verify one
   user.resetCodeVerified = false;
-  user.save();
+  await user.save();
 
   // 3)  Send password reset code via email
   // We use try and catch because i want to implement logic if error happens

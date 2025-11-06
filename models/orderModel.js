@@ -56,13 +56,13 @@ const orderSchema = new mongoose.Schema(
     deliveredAt: Date,
     id: {
       type: Number,
-      unique: true,
+      unique: false,
     },
   }, { timestamps: true });
   
   orderSchema.pre('save', async function(next) {
-    const count = await this.model('Order').countDocuments();
-    this.id = count + 1; // Set the auto-increment value
+    // const count = await this.model('Order').countDocuments();
+    // this.id = count; // Set the auto-increment value
     next();
   });
 
@@ -78,11 +78,11 @@ orderSchema.pre(/^find/, function (next) {
   next();
 });
 
-// orderSchema.plugin(autoIncrement.plugin, {
-//   model: 'Order',
-//   field: 'id',
-//   startAt: 1,
-//   incrementBy: 1,
-// });
+orderSchema.plugin(autoIncrement.plugin, {
+  model: 'Order',
+  field: 'id',
+  startAt: 1,
+  incrementBy: 1,
+});
 
 module.exports = mongoose.model('Order', orderSchema);

@@ -24,9 +24,26 @@ const calcTotalCartPrice = async (cart) => {
 // @route     POST /api/v1/cart
 // @access    Private/User
 exports.addProductToCart = asyncHandler(async (req, res, next) => {
-  const { productId, color } = req.body;
+  const { productId, color, count = 1 } = req.body; // Default count to 1 if not provided
 
   const product = await Product.findById(productId);
+  
+  if (!product) {
+    return res.status(404).json({
+      status: 'error',
+      message: `Product not found with id: ${productId}`
+    });
+  }
+
+  // Validate requested quantity
+  if (count <= 0) {
+    const errorMsg = `Invalid quantity: ${count}. Quantity must be greater than 0`;
+    console.log(`[CART ERROR] ${errorMsg}`);
+    return res.status(400).json({
+      status: 'error',
+      message: errorMsg
+    });
+  }
 
   // 1) Check if there is cart for logged user
   let cart = await Cart.findOne({ cartOwner: req.user._id });
@@ -41,20 +58,68 @@ exports.addProductToCart = asyncHandler(async (req, res, next) => {
     if (itemIndex > -1) {
       //product exists in the cart, update the quantity
       const productItem = cart.products[itemIndex];
-      productItem.count += 1;
+      const newCount = productItem.count + count; // Add requested quantity
+      
+      // Check if new quantity exceeds available stock
+      if (newCount > product.quantity) {
+        const errorMsg = `Insufficient stock for ${product.title}. Available: ${product.quantity}, Current in cart: ${productItem.count}, Requested to add: ${count}, Total would be: ${newCount}`;
+        console.log(`[STOCK ERROR] ${errorMsg}`);
+        return res.status(400).json({
+          product: product,
+          count:count,
+          status: 'error',
+          message: errorMsg
+        });
+      }
+      
+      productItem.count = newCount;
       cart.products[itemIndex] = productItem;
     } else {
-      //product does not exists in cart, add new item
-      cart.products.push({ product: productId, color, price: product.price });
+      // Check if available stock is sufficient for new item with requested quantity
+      if (product.quantity < count) {
+        const errorMsg = `Insufficient stock for ${product.title}. Available: ${product.quantity}, Requested: ${count}`;
+        console.log(`[STOCK ERROR] ${errorMsg}`);
+        return res.status(400).json({
+          product:product,
+          count:count,
+          status: 'error',
+          message: errorMsg
+        });
+      }
+      
+      //product does not exists in cart, add new item with requested quantity
+      cart.products.push({ 
+        product: productId, 
+        color, 
+        price: product.price, 
+        count: count 
+      });
     }
     // cart = await cart.save();
     // return res.status(201).send(cart);
   }
   if (!cart) {
-    //no cart for user, create new cart
+    // Check if available stock is sufficient for new cart with requested quantity
+    if (product.quantity < count) {
+      const errorMsg = `Insufficient stock for ${product.title}. Available: ${product.quantity}, Requested: ${count}`;
+      console.log(`[STOCK ERROR] ${errorMsg}`);
+      return res.status(400).json({
+          product: product,
+          count:count,
+        status: 'error',
+        message: errorMsg
+      });
+    }
+    
+    //no cart for user, create new cart with requested quantity
     cart = await Cart.create({
       cartOwner: req.user._id,
-      products: [{ product: productId, color, price: product.price }],
+      products: [{ 
+        product: productId, 
+        color, 
+        price: product.price, 
+        count: count 
+      }],
     });
   }
   // let totalPrice = 0;
@@ -70,7 +135,7 @@ exports.addProductToCart = asyncHandler(async (req, res, next) => {
 
   return res.status(200).json({
     status: 'success',
-    message: 'Product added successfully to your cart',
+    message: `${count} ${count > 1 ? 'items' : 'item'} of ${product.title} added successfully to your cart`,
     numOfCartItems: cart.products.length,
     data: cart,
   });
@@ -95,9 +160,10 @@ exports.updateCartProductCount = asyncHandler(async (req, res, next) => {
       populate: { path: 'category', select: 'name -_id', model: 'Category' },
     });
   if (!cart) {
-    return next(
-      new ApiError(`No cart exist for this user: ${req.user._id}`, 404)
-    );
+    return res.status(404).json({
+      status: 'error',
+      message: `No cart exist for this user: ${req.user._id}`
+    });
   }
 
   const itemIndex = cart.products.findIndex(
@@ -107,12 +173,32 @@ exports.updateCartProductCount = asyncHandler(async (req, res, next) => {
   if (itemIndex > -1) {
     //product exists in the cart, update the quantity
     const productItem = cart.products[itemIndex];
+    const product = productItem.product; // This is populated with full product data
+    
+    // Check if requested count exceeds available stock
+    if (count > product.quantity) {
+      return res.status(400).json({
+          product: product.title,
+        status: 'error',
+        message: `Insufficient stock for ${product.title}. Available: ${product.quantity}, Requested: ${count}`
+      });
+    }
+    
+    // Check for valid count (must be positive)
+    if (count <= 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Product quantity must be greater than 0'
+      });
+    }
+    
     productItem.count = count;
     cart.products[itemIndex] = productItem;
   } else {
-    return next(
-      new ApiError(`No Product Cart item found for this id: ${itemId}`)
-    );
+    return res.status(400).json({
+      status: 'error',
+      message: `No Product Cart item found for this id: ${itemId}`
+    });
   }
   // Calculate total cart price
   await calcTotalCartPrice(cart);
@@ -141,9 +227,10 @@ exports.getLoggedUserCart = asyncHandler(async (req, res, next) => {
     });
 
   if (!cart) {
-    return next(
-      new ApiError(`No cart exist for this user: ${req.user._id}`, 404)
-    );
+    return res.status(404).json({
+      status: 'error',
+      message: `No cart exist for this user: ${req.user._id}`
+    });
   }
   return res.status(200).json({
     status: 'success',
@@ -223,7 +310,10 @@ exports.applyCouponToCart = asyncHandler(async (req, res, next) => {
     cart.totalAfterDiscount = undefined;
     cart.coupon = undefined;
     await cart.save();
-    return next(new ApiError('Coupon is invalid or has expired', 400));
+    return res.status(400).json({
+      status: 'error',
+      message: 'Coupon is invalid or has expired'
+    });
   }
 
   const totalPrice = await calcTotalCartPrice(cart);

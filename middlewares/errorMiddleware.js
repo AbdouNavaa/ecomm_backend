@@ -28,10 +28,13 @@ const sendErrorForProduction = (err, req, res) => {
 };
 // module.exports = customError;
 const handleDuplicateFieldsDB = (err) => {
-  const value = err.errmsg.match(/(["'])(?:(?=(\\?))\2.)*?\1/)[0];
-  const message = `Duplicate field value: ${value}. Please use another value!`;
+  const field = Object.keys(err.keyValue)[0];
+  const value = Object.values(err.keyValue)[0];
+  const message = `Duplicate field "${field}" with value "${value}". Please use another value!`;
   return new AppError(message, 400);
 };
+
+
 
 const handleJWTError = () =>
   new AppError('Invalid Token. please login again', 401);
